@@ -2,7 +2,7 @@ package SystolicArray
 
 import chisel3._
 
-class SystolicTensorArray(blockSize: Int, PESize: Int, vectorSize: Int, width: Int) {
+class SystolicTensorArray(blockSize: Int, PESize: Int, vectorSize: Int, width: Int) extends Module {
 
   val io = IO(new Bundle {
     val inputVector: Vec[UInt] = Input(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
@@ -33,7 +33,7 @@ class SystolicTensorArray(blockSize: Int, PESize: Int, vectorSize: Int, width: I
   }
 }
 
-class BlockPE(PESize: Int, vectorSize: Int, width: Int) {
+class BlockPE(PESize: Int, vectorSize: Int, width: Int) extends Module {
 
   val io = IO(new Bundle {
     val inputVector: Vec[UInt] = Input(Vec(PESize * vectorSize, UInt(width.W)))
@@ -77,7 +77,7 @@ class BlockPE(PESize: Int, vectorSize: Int, width: Int) {
 
 }
 
-class TensorProcessingEngine(vectorSize:Int, width: Int) {
+class TensorProcessingEngine(vectorSize:Int, width: Int) extends Module {
   val io = IO(new Bundle {
     val control = Input(Bool()) //1이면 current, 0이면 previous
     val input = Input(Vec(vectorSize, UInt(width.W)))
