@@ -285,11 +285,6 @@ class SystolicArrayTest extends AnyFreeSpec with Matchers {
         }
       }
 
-      def resetClear(vectorSize: Int): Unit = {
-        for(i <- 0 until vectorSize * vectorSize)
-          instance.io.resetVector(i).poke(false.B)
-      }
-
       def dataFeeding(startIdx: Int, inputRow: Int, inputCol: Int, weightRow : Int, weightCol: Int): Unit = {
         for(i <- 0 until vectorSize) {
           var row = inputRow + i
@@ -349,10 +344,7 @@ class ProcessingEngineTest extends AnyFreeSpec with Matchers {
       c.clock.step()
       c.io.output.expect(9.U(width.W))
 
-
-
     }
   }
 }
-
 */

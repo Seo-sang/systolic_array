@@ -5,30 +5,87 @@ import chisel3._
 class SystolicTensorArray(blockSize: Int, PESize: Int, vectorSize: Int, width: Int) extends Module {
 
   val io = IO(new Bundle {
+    val resetVector: Vec[UInt] = Input(Vec(blockSize * blockSize , Bool()))
+    val controlVector: Vec[UInt] = Input(Vec(blockSize * blockSize , Bool()))
     val inputVector: Vec[UInt] = Input(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
     val weightVector: Vec[UInt] = Input(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
-    val outputVector: Vec[UInt] = Output(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
+    val inputOutVector: Vec[UInt] = Output(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
+    val weightOutVector: Vec[UInt] = Output(Vec(blockSize * PESize * vectorSize, UInt(width.W)))
+    val outputVector: Vec[UInt] = Output(Vec((blockSize * 2 - 1) * PESize * vectorSize, UInt(width.W)))
   })
 
   val blocks= Vector.fill(blockSize * blockSize)(Module(new BlockPE(PESize, vectorSize, width)))
 
+  //input & weight pass through
+  for(b <- 0 until blockSize) {
+    for(cnt <- 0 until PESize * vectorSize) {
+      io.inputOutVector(b * PESize * vectorSize + cnt) := blocks(b * blockSize + 1).io.inputOutputVector(cnt)
+      io.weightOutVector(b * PESize * vectorSize + cnt) := blocks(blockSize * (blockSize - 1) + b).io.weightOutputVector(cnt)
+    }
+  }
+
+  //reset & control
+  for(row <- 0 until blockSize) {
+    for(col <- 0 until blockSize) {
+      val idx = row * blockSize + col
+      blocks(idx).io.resetVector := io.resetVector(idx)
+      blocks(idx).io.controlVector := io.controlVector(idx)
+    }
+  }
+
   for(row <- 0 until blockSize) {
     for(col <- 0 until blockSize) {
       val currentIdx = row * blockSize + col
-      val rightIdx = row * blockSize + col + 1
-      val belowIdx = (row + 1) * blockSize + col
+      val leftIdx = row * blockSize + col - 1
+      val aboveIdx = (row - 1) * blockSize + col
+      val diagonalIdx = (row - 1) * blockSize + col + 1 //오른족 위
 
+      //weight flow
       if(row == 0) {
-        for(cnt <- 0 until PESize * vectorSize)
-          blocks(currentIdx).io.weightVector(cnt) := io.weightVector(col * blockSize + cnt)
+        for(cnt <- 0 until PESize * vectorSize) {
+          blocks(currentIdx).io.weightVector(cnt) := io.weightVector(col * PESize * vectorSize  + cnt)
+        }
       }
-      else if(row != blockSize - 1) blocks(belowIdx).io.weightVector := blocks(currentIdx).io.weightOutputVector
+      else {
+        for(cnt <- 0 until PESize * vectorSize) {
+          blocks(currentIdx).io.weightVector(cnt) := blocks(aboveIdx).io.weightOutputVector(cnt)
+        }
+      }
 
+      //input flow
       if(col == 0) {
-        for(cnt <- 0 until PESize * vectorSize)
-          blocks(currentIdx).io.inputVector(cnt) := io.inputVector(row * blockSize + cnt)
+        for(cnt <- 0 until PESize * vectorSize) {
+          blocks(currentIdx).io.inputVector(cnt) := io.inputVector(row * PESize * vectorSize + cnt)
+        }
       }
-      else if(col != blockSize - 1) blocks(rightIdx).io.inputVector := blocks(currentIdx).io.inputOutputVector
+      else {
+        for(cnt <- 0 until PESize * vectorSize) {
+          blocks(currentIdx).io.inputVector(cnt) := blocks(leftIdx).io.inputOutputVector(cnt)
+        }
+      }
+
+      //output flow
+      if(row == 0) {
+        for(cnt <- 0 until PESize * PESize) {
+          io.outputVector(col * PESize * PESize + cnt) := blocks(currentIdx).io.outputVector(cnt)
+        }
+      }
+      else if(col == blockSize - 1) {
+        for(cnt <- 0 until PESize * PESize) {
+          io.outputVector((blockSize - 1 + row) * PESize * PESize + cnt) := blocks(currentIdx).io.outputVector(cnt)
+        }
+      }
+      else {
+        for(cnt <- 0 until PESize * PESize) {
+          blocks(diagonalIdx).io.previousResultVector(cnt) := blocks(currentIdx).io.outputVector(cnt)
+        }
+      }
+
+      if(col == 0 || row == blockSize - 1) {
+        for(cnt <- 0 until PESize * PESize) {
+          blocks(currentIdx).io.previousResultVector(cnt) := 0.U(width.W)
+        }
+      }
     }
   }
 }
@@ -36,10 +93,11 @@ class SystolicTensorArray(blockSize: Int, PESize: Int, vectorSize: Int, width: I
 class BlockPE(PESize: Int, vectorSize: Int, width: Int) extends Module {
 
   val io = IO(new Bundle {
-    val resetVector: Vec[UInt] = Input(Vec(PESize * vectorSize, Bool()))
-    val controlVector: Vec[UInt] = Input(Vec(PESize * vectorSize, Bool()))
+    val resetVector: Bool = Input(Bool())
+    val controlVector: Bool = Input(Bool())
     val inputVector: Vec[UInt] = Input(Vec(PESize * vectorSize, UInt(width.W)))
     val weightVector: Vec[UInt] = Input(Vec(PESize * vectorSize, UInt(width.W)))
+    val previousResultVector: Vec[UInt] = Input(Vec(PESize * PESize, UInt(width.W)))
     val outputVector: Vec[UInt] = Output(Vec(PESize * PESize, UInt(width.W)))
     val inputOutputVector : Vec[UInt] = Output(Vec(PESize * vectorSize, UInt(width.W)))
     val weightOutputVector : Vec[UInt] = Output(Vec(PESize * vectorSize, UInt(width.W)))
@@ -51,8 +109,8 @@ class BlockPE(PESize: Int, vectorSize: Int, width: Int) extends Module {
 
   for(i <- 0 until PESize) {
     for(j <- 0 until vectorSize) {
-      val idx = i * PESize + vectorSize
-      inputVectorReg(idx) := PEs(i * PESize + 1).io.inputOut(j)
+      val idx = i * vectorSize + j
+      inputVectorReg(idx) := PEs(i * PESize + (PESize - 1)).io.inputOut(j)
       weightVectorReg(idx) := PEs(PESize + i).io.weightOut(j)
 
       io.inputOutputVector(idx) := inputVectorReg(idx)
@@ -94,7 +152,12 @@ class BlockPE(PESize: Int, vectorSize: Int, width: Int) extends Module {
       io.outputVector(currentIdx) := PEs(currentIdx).io.output
 
       //reset & control flow
-      PEs(currentIdx).io.
+      PEs(currentIdx).io.reset := io.resetVector
+      PEs(currentIdx).io.control := io.controlVector
+
+
+      //previous result flow
+      PEs(currentIdx).io.previousResult := io.previousResultVector(currentIdx)
 
     }
   }
